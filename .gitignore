@@ -1,0 +1,15 @@
+# Secrets - NEVER commit
+.env
+
+# Backend build
+complianceIQ/target/
+complianceIQ/.idea/
+*.iml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS / IDE
+.DS_Store
+.vscode/

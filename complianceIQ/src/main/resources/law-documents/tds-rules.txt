@@ -1,0 +1,38 @@
+TDS (Tax Deducted at Source) Rules on Salary 2025-26
+
+New Tax Regime Slabs for FY 2025-26:
+- Income up to Rs 3,00,000: Nil
+- Rs 3,00,001 to Rs 7,00,000: 5%
+- Rs 7,00,001 to Rs 10,00,000: 10%
+- Rs 10,00,001 to Rs 12,00,000: 15%
+- Rs 12,00,001 to Rs 15,00,000: 20%
+- Above Rs 15,00,000: 30%
+
+Standard Deduction:
+- Rs 75,000 for salaried employees under new regime
+- Rs 50,000 under old regime
+
+Section 87A Rebate:
+- Full rebate if taxable income up to Rs 7,00,000 under new regime
+- Effectively no tax up to Rs 7,00,000 income
+
+TDS Calculation on Salary:
+- Estimate annual salary income
+- Subtract standard deduction
+- Apply applicable slab rates
+- Divide annual tax by 12 for monthly TDS
+
+TDS Deadlines:
+- Monthly TDS payment due by 7th of following month
+- For March, due by 30th April
+- Quarterly TDS return (Form 24Q) filing required
+- Q1 by 31 July, Q2 by 31 October, Q3 by 31 January, Q4 by 31 May
+
+TDS Forms:
+- Form 24Q: Quarterly TDS return for salary
+- Form 16: Annual TDS certificate to employee (by 15 June)
+
+TDS Late Payment Penalty:
+- Interest at 1.5% per month on delayed TDS
+- Late filing fee Rs 200 per day under Section 234E
+- Penalty under Section 271H up to Rs 1,00,000

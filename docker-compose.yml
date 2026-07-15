@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with PGVector built-in
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: complianceiq-db
+    environment:
+      POSTGRES_DB: complianceiq
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Rohit321
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Spring Boot Backend
+  backend:
+    build: ./complianceIQ
+    container_name: complianceiq-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/complianceiq
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: Rohit321
+      SPRING_AI_OPENAI_API_KEY: ${GROQ_API_KEY}
+      SPRING_AI_OPENAI_BASE_URL: https://api.groq.com/openai
+      SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
+      SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "8080:8080"
+
+  # React Frontend
+  frontend:
+    build: ./frontend
+    container_name: complianceiq-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:
