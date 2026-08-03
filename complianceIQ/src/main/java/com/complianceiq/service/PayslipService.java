@@ -1,17 +1,17 @@
 package com.complianceiq.service;
 
+import com.complianceiq.model.Attendance;
+import com.complianceiq.model.Company;
 import com.complianceiq.model.Employee;
 import com.complianceiq.repository.EmployeeRepository;
-import com.itextpdf.kernel.colors.ColorConstants;
-import com.itextpdf.kernel.colors.DeviceRgb;
-import com.itextpdf.kernel.pdf.PdfDocument;
+import com.complianceiq.service.pdf.PdfBase;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
+import com.itextpdf.layout.borders.Border;
 import com.itextpdf.layout.element.Cell;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.element.Table;
 import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.UnitValue;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,194 +19,276 @@ import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Month;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * Government-style Indian pay slip on A4 (210 x 297 mm), single page.
+ *
+ * Rates ya amounts yahan calculate NAHI hote - sab StatutoryRuleService
+ * (DB-driven) aur AttendanceService se aate hain. Yeh sirf render karta hai.
+ */
 @Service
 @RequiredArgsConstructor
-public class PayslipService {
+public class PayslipService extends PdfBase {
 
     private final EmployeeRepository employeeRepository;
+    private final StatutoryRuleService statutoryRuleService;
+    private final AttendanceService attendanceService;
 
-    private static final DeviceRgb HEADER_COLOR = new DeviceRgb(47, 84, 150);
-    private static final DeviceRgb LIGHT_GRAY = new DeviceRgb(240, 240, 240);
-    private static final DeviceRgb GREEN = new DeviceRgb(29, 158, 117);
-
-    private static final BigDecimal EPF_RATE = new BigDecimal("0.12");
-    private static final BigDecimal ESI_EMP_RATE = new BigDecimal("0.0075");
-    private static final BigDecimal ESI_LIMIT = new BigDecimal("21000");
+    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd-MM-yyyy");
 
     public byte[] generatePayslip(UUID employeeId, int month, int year) {
 
+        /* ---------- VALIDATION ---------- */
+        // Future period ki payslip exist hi nahi karti - UI dropdown ke alawa
+        // server pe bhi rokna zaroori hai (URL se bypass na ho)
+        if (month < 1 || month > 12)
+            throw new RuntimeException("Invalid month: " + month);
+        if (YearMonth.of(year, month).isAfter(YearMonth.now()))
+            throw new RuntimeException("Pay slip is not available for a future period ("
+                    + Month.of(month) + " " + year + ").");
+
         Employee emp = employeeRepository.findById(employeeId)
                 .orElseThrow(() -> new RuntimeException("Employee not found"));
+        Company co = emp.getCompany();
 
-        // Calculations
-        BigDecimal basic = emp.getBasicSalary();
-        BigDecimal hra = emp.getHra() != null ? emp.getHra() : BigDecimal.ZERO;
-        BigDecimal special = emp.getSpecialAllowance() != null ?
-                emp.getSpecialAllowance() : BigDecimal.ZERO;
-        BigDecimal gross = emp.getTotalCtc();
+        /* ---------- ATTENDANCE / LOP ---------- */
+        Attendance att    = attendanceService.getOrDefault(emp, month, year);
+        BigDecimal factor = att.getAttendanceFactor();          // 25/26 = 0.9615
 
-        // Deductions
-        BigDecimal epf = basic.multiply(EPF_RATE)
-                .setScale(2, RoundingMode.HALF_UP);
+        /* ---------- CONTRACTED (full month) ---------- */
+        BigDecimal fullGross = emp.getMonthlyGross();
 
-        BigDecimal esi = BigDecimal.ZERO;
-        if (gross.compareTo(ESI_LIMIT) <= 0) {
-            esi = gross.multiply(ESI_EMP_RATE)
-                    .setScale(2, RoundingMode.HALF_UP);
-        }
+        /* ---------- EARNED (LOP ke baad) ---------- */
+        BigDecimal basic  = pro(emp.getBasicSalary(),         factor);
+        BigDecimal hra    = pro(emp.getHra(),                 factor);
+        BigDecimal conv   = pro(emp.getConveyanceAllowance(), factor);
+        BigDecimal spl    = pro(emp.getSpecialAllowance(),    factor);
+        BigDecimal med    = pro(emp.getMedicalAllowance(),    factor);
+        BigDecimal other  = pro(emp.getOtherAllowance(),      factor);
+        BigDecimal gross  = basic.add(hra).add(conv).add(spl).add(med).add(other);
+        BigDecimal lopAmt = fullGross.subtract(gross);
 
-        BigDecimal pt = calculatePT(gross, emp.getWorkState());
-        BigDecimal totalDeductions = epf.add(esi).add(pt);
-        BigDecimal netPay = gross.subtract(totalDeductions);
+        String state = emp.getApplicableState();
 
+        /* ---------- DEDUCTIONS (rule engine se, hardcode nahi) ---------- */
+        var pf = Boolean.TRUE.equals(emp.getPfApplicable())
+                ? statutoryRuleService.calculatePf(basic)
+                : new StatutoryRuleService.PfResult(BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, false);
+
+        // ESI eligibility CONTRACTED gross pe, contribution EARNED gross pe
+        var esiCheck = statutoryRuleService.calculateEsi(fullGross);
+        var esi = esiCheck.applicable()
+                ? statutoryRuleService.calculateEsi(gross)
+                : new StatutoryRuleService.EsiResult(BigDecimal.ZERO, BigDecimal.ZERO, false);
+
+        // PT full gross pe - LOP se slab nahi badalta
+        BigDecimal pt = Boolean.TRUE.equals(emp.getPtApplicable())
+                ? statutoryRuleService.calculateProfessionalTax(state, fullGross)
+                : BigDecimal.ZERO;
+
+        var lwf = statutoryRuleService.calculateLwf(state);
+
+        BigDecimal totalDed = pf.employee().add(esi.employee()).add(pt).add(lwf.employee());
+        BigDecimal netPay   = gross.subtract(totalDed).setScale(0, RoundingMode.HALF_UP);
+
+        /* ================= PDF - A4, single page, bordered grid ================= */
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (Document doc = newA4(new PdfWriter(baos))) {
 
-        try {
-            PdfWriter writer = new PdfWriter(baos);
-            PdfDocument pdf = new PdfDocument(writer);
-            Document doc = new Document(pdf);
+            // Poora pay slip ek outer bordered box mein - govt format
+            Table outer = outerBox();
+            Cell box = new Cell().setPadding(0).setBorder(Border.NO_BORDER);
 
-            // Header
-            doc.add(new Paragraph("PAYSLIP")
-                    .setFontSize(20).setBold()
-                    .setFontColor(HEADER_COLOR)
-                    .setTextAlignment(TextAlignment.CENTER));
+            /* ---------- 1. ORGANISATION HEADER ---------- */
+            box.add(new Paragraph(co.getCompanyName().toUpperCase())
+                    .setFontSize(13).setBold().setTextAlignment(TextAlignment.CENTER)
+                    .setMarginTop(6).setMarginBottom(1));
 
-            doc.add(new Paragraph(emp.getCompany().getCompanyName())
-                    .setFontSize(12)
-                    .setTextAlignment(TextAlignment.CENTER));
+            String address = joinNonBlank(", ", co.getAddressLine1(), co.getAddressLine2(),
+                    joinNonBlank(" - ", co.getCity(), co.getPincode()));
+            if (!address.isBlank())
+                box.add(new Paragraph(address).setFontSize(7.5f)
+                        .setTextAlignment(TextAlignment.CENTER).setMarginBottom(1));
 
-            doc.add(new Paragraph("For the month of " +
-                    Month.of(month).name() + " " + year)
-                    .setFontSize(10)
-                    .setFontColor(ColorConstants.GRAY)
-                    .setTextAlignment(TextAlignment.CENTER));
+            String ids = joinNonBlank("    ",
+                    prefix("PAN: ", co.getPan()),
+                    prefix("TAN: ", co.getTanNumber()),
+                    prefix("EPF Code: ", co.getEpfRegistrationNumber()),
+                    prefix("ESIC Code: ", co.getEsicRegistrationNumber()));
+            if (!ids.isBlank())
+                box.add(new Paragraph(ids).setFontSize(7)
+                        .setTextAlignment(TextAlignment.CENTER).setMarginBottom(3));
 
-            doc.add(new Paragraph("\n"));
+            box.add(titleBar("PAY SLIP FOR THE MONTH OF " + Month.of(month) + " " + year));
 
-            // Employee details
-            Table empTable = new Table(UnitValue.createPercentArray(
-                    new float[]{1, 1})).useAllAvailableWidth();
-            addRow(empTable, "Employee Name", emp.getFullName());
-            addRow(empTable, "Employee Code",
-                    emp.getEmployeeCode() != null ? emp.getEmployeeCode() : "-");
-            addRow(empTable, "Designation",
-                    emp.getDesignation() != null ? emp.getDesignation() : "-");
-            addRow(empTable, "PAN",
-                    emp.getPanNumber() != null ? emp.getPanNumber() : "-");
-            addRow(empTable, "UAN",
-                    emp.getUanNumber() != null ? emp.getUanNumber() : "-");
-            doc.add(empTable);
-            doc.add(new Paragraph("\n"));
+            /* ---------- 2. EMPLOYEE DETAILS ---------- */
+            Table info = grid(1.15f, 1.6f, 1.15f, 1.6f);
+            kv(info, "Employee Code",   dash(emp.getEmployeeCode()));
+            kv(info, "PAN",             dash(emp.getPan()));
+            kv(info, "Employee Name",   dash(emp.getFullName()));
+            kv(info, "UAN",             dash(emp.getUanNumber()));
+            kv(info, "Designation",     dash(emp.getDesignation()));
+            kv(info, "ESIC IP No.",     dash(emp.getEsicIpNumber()));
+            kv(info, "Department",      dash(emp.getDepartment()));
+            kv(info, "Date of Joining",
+                    emp.getDateOfJoining() == null ? "-" : emp.getDateOfJoining().format(DMY));
+            kv(info, "Bank A/C",        maskedBank(emp));
+            kv(info, "Work State",      dash(state));
+            box.add(info);
 
-            // Earnings + Deductions side by side
-            Table mainTable = new Table(UnitValue.createPercentArray(
-                    new float[]{1, 1})).useAllAvailableWidth();
+            /* ---------- 3. ATTENDANCE ---------- */
+            Table at = grid(1, 1, 1, 1, 1);
+            head(at, "Working Days"); head(at, "Days Present"); head(at, "Paid Leave");
+            head(at, "Loss of Pay");  head(at, "Paid Days");
+            valC(at, str(att.getWorkingDays()));
+            valC(at, str(att.getPresentDays()));
+            valC(at, str(att.getPaidLeaveDays()));
+            valC(at, str(att.getLopDays()));
+            valC(at, str(att.getPaidDays()));
+            box.add(at);
 
-            // Earnings column
-            Cell earningsCell = new Cell();
-            earningsCell.add(new Paragraph("EARNINGS").setBold()
-                    .setFontColor(ColorConstants.WHITE)
-                    .setBackgroundColor(HEADER_COLOR));
-            earningsCell.add(lineItem("Basic Salary", basic));
-            earningsCell.add(lineItem("HRA", hra));
-            earningsCell.add(lineItem("Special Allowance", special));
-            earningsCell.add(new Paragraph("Gross: Rs " + gross)
-                    .setBold());
-            mainTable.addCell(earningsCell);
+            /* ---------- 4. EARNINGS | DEDUCTIONS ---------- */
+            Table money = grid(2.2f, 1.3f, 2.2f, 1.3f);
+            head(money, "EARNINGS");    headR(money, "AMOUNT (Rs)");
+            head(money, "DEDUCTIONS");  headR(money, "AMOUNT (Rs)");
 
-            // Deductions column
-            Cell dedCell = new Cell();
-            dedCell.add(new Paragraph("DEDUCTIONS").setBold()
-                    .setFontColor(ColorConstants.WHITE)
-                    .setBackgroundColor(HEADER_COLOR));
-            dedCell.add(lineItem("EPF (12%)", epf));
-            dedCell.add(lineItem("ESI (0.75%)", esi));
-            dedCell.add(lineItem("Professional Tax", pt));
-            dedCell.add(new Paragraph("Total: Rs " + totalDeductions)
-                    .setBold());
-            mainTable.addCell(dedCell);
+            payRow(money, "Basic Pay",            basic, "Provident Fund (EPF)", pf.employee());
+            payRow(money, "House Rent Allowance", hra,   "ESI Contribution",     esi.employee());
+            payRow(money, "Conveyance Allowance", conv,  "Professional Tax",     pt);
+            payRow(money, "Special Allowance",    spl,   "Labour Welfare Fund",  lwf.employee());
+            payRow(money, "Medical Allowance",    med,   "",                     null);
+            payRow(money, "Other Allowance",      other, "",                     null);
 
-            doc.add(mainTable);
-            doc.add(new Paragraph("\n"));
+            total(money, "GROSS EARNINGS");   totalR(money, amt(gross));
+            total(money, "TOTAL DEDUCTIONS"); totalR(money, amt(totalDed));
+            box.add(money);
 
-            // Net Pay
-            doc.add(new Paragraph("NET PAY: Rs " + netPay)
-                    .setFontSize(16).setBold()
-                    .setFontColor(GREEN)
-                    .setTextAlignment(TextAlignment.CENTER));
+            /* ---------- 5. NET PAY ---------- */
+            Table net = grid(2.2f, 1.3f, 3.5f);
+            net.addCell(new Cell().add(new Paragraph("NET PAY").setFontSize(10).setBold())
+                    .setPadding(5).setBorder(LINE));
+            net.addCell(new Cell().add(new Paragraph("Rs " + amt(netPay))
+                            .setFontSize(11).setBold().setTextAlignment(TextAlignment.RIGHT))
+                    .setPadding(5).setBorder(LINE));
+            net.addCell(new Cell().add(new Paragraph(rupeesInWords(netPay))
+                            .setFontSize(8).setItalic())
+                    .setPadding(5).setBorder(LINE));
+            box.add(net);
 
-            doc.add(new Paragraph("\n\n"));
+            /* ---------- 6. EMPLOYER CONTRIBUTION (deduct nahi hota) ---------- */
+            Table er = grid(1.6f, 1, 1, 1);
+            head(er, "EMPLOYER CONTRIBUTION"); head(er, "EPF"); head(er, "ESI"); head(er, "LWF");
+            valC(er, "(not deducted from salary)");
+            valC(er, "Rs " + amt(pf.employer()));
+            valC(er, "Rs " + amt(esi.employer()));
+            valC(er, "Rs " + amt(lwf.employer()));
+            box.add(er);
 
-            // Disclaimer
-            doc.add(new Paragraph("This is a computer-generated payslip. " +
-                    "Please verify with your CA for final figures.")
-                    .setFontSize(8)
-                    .setFontColor(ColorConstants.GRAY)
-                    .setItalic());
+            /* ---------- 7. NOTES ---------- */
+            StringBuilder notes = new StringBuilder();
+            int n = 1;
+            if (pf.cappedAtCeiling())
+                notes.append(n++).append(". EPF computed on the statutory wage ceiling of Rs ")
+                        .append(amt(pf.pfWage())).append(", not on full basic pay.    ");
+            if (!esiCheck.applicable())
+                notes.append(n++).append(". ESI not applicable - gross wages exceed "
+                        + "the Rs 21,000 threshold.    ");
+            if (pt.compareTo(BigDecimal.ZERO) == 0 && state != null)
+                notes.append(n++).append(". Professional Tax is nil for ").append(state)
+                        .append(" (not levied, or a nil slab applies).    ");
+            if (lopAmt.compareTo(BigDecimal.ZERO) > 0)
+                notes.append(n).append(". Loss of Pay for ").append(str(att.getLopDays()))
+                        .append(" day(s): Rs ").append(amt(lopAmt))
+                        .append(" deducted from gross earnings.    ");
 
-            doc.close();
-            return baos.toByteArray();
+            if (notes.length() > 0)
+                box.add(new Paragraph("Notes: " + notes)
+                        .setFontSize(7).setPadding(4).setBorderTop(LINE));
+
+            box.add(footerNote("This is a computer-generated pay slip and does not "
+                    + "require a signature."));
+
+            outer.addCell(box);
+            doc.add(outer);
 
         } catch (Exception e) {
-            throw new RuntimeException("Error generating payslip: " +
-                    e.getMessage());
+            throw new RuntimeException("Error generating pay slip: " + e.getMessage(), e);
         }
+
+        // try-with-resources BAND hone ke BAAD - tab PDF footer/xref likha jaata hai.
+        // Andar return karne se file adhoori rehti thi -> "Failed to load PDF document"
+        return baos.toByteArray();
     }
 
-    private BigDecimal calculatePT(BigDecimal salary, String state) {
-        if (state == null) return BigDecimal.ZERO;
-        if (state.equalsIgnoreCase("Maharashtra")) {
-            if (salary.compareTo(new BigDecimal("7500")) <= 0)
-                return BigDecimal.ZERO;
-            else if (salary.compareTo(new BigDecimal("10000")) <= 0)
-                return new BigDecimal("175");
-            else return new BigDecimal("200");
-        }
-        return BigDecimal.ZERO;
-    }
-
-    private void addRow(Table table, String label, String value) {
-        table.addCell(new Cell().add(new Paragraph(label).setBold())
-                .setBackgroundColor(LIGHT_GRAY));
-        table.addCell(new Cell().add(new Paragraph(value)));
-    }
-
-    private Paragraph lineItem(String label, BigDecimal amount) {
-        return new Paragraph(label + ": Rs " + amount).setFontSize(10);
-    }
-
-    // NEW — bulk payslips as ZIP
+    /* ==================================================================
+       BULK PAY SLIPS - ZIP
+       ================================================================== */
     public byte[] generateBulkPayslips(UUID companyId, int month, int year) {
-        List<Employee> employees = employeeRepository
-                .findByCompanyIdAndIsActiveTrue(companyId);
-
-        if (employees.isEmpty()) {
-            throw new RuntimeException("No active employees found");
-        }
+        List<Employee> employees = employeeRepository.findByCompanyIdAndIsActiveTrue(companyId);
+        if (employees.isEmpty()) throw new RuntimeException("No active employees found");
 
         ByteArrayOutputStream zipOut = new ByteArrayOutputStream();
-
         try (ZipOutputStream zip = new ZipOutputStream(zipOut)) {
             for (Employee emp : employees) {
                 byte[] pdf = generatePayslip(emp.getId(), month, year);
-
-                String filename = emp.getFullName()
-                        .replaceAll("[^a-zA-Z0-9]", "_") + "_payslip.pdf";
-
-                zip.putNextEntry(new ZipEntry(filename));
+                String code = emp.getEmployeeCode() == null ? "" : emp.getEmployeeCode() + "_";
+                String name = emp.getFullName().replaceAll("[^a-zA-Z0-9]", "_");
+                zip.putNextEntry(new ZipEntry(code + name + "_" + month + "_" + year + ".pdf"));
                 zip.write(pdf);
                 zip.closeEntry();
             }
         } catch (Exception e) {
-            throw new RuntimeException("Error creating ZIP: " + e.getMessage());
+            throw new RuntimeException("Error creating ZIP: " + e.getMessage(), e);
         }
-
         return zipOut.toByteArray();
+    }
+
+    /* ==================================================================
+       PAY SLIP SPECIFIC HELPERS
+       (kv, head, headR, valC, total, totalR, titleBar, footerNote,
+        grid, outerBox, amt, dash, prefix, joinNonBlank, nz,
+        rupeesInWords  -> sab PdfBase se aate hain)
+       ================================================================== */
+
+    /** Ek row: earnings left, deductions right */
+    private void payRow(Table t, String earnLabel, BigDecimal earnAmt,
+                        String dedLabel, BigDecimal dedAmt) {
+        t.addCell(new Cell().add(new Paragraph(earnLabel).setFontSize(8))
+                .setPadding(3).setBorder(LINE));
+        t.addCell(new Cell().add(new Paragraph(earnAmt == null ? "" : amt(earnAmt))
+                        .setFontSize(8).setTextAlignment(TextAlignment.RIGHT))
+                .setPadding(3).setBorder(LINE));
+        t.addCell(new Cell().add(new Paragraph(dedLabel).setFontSize(8))
+                .setPadding(3).setBorder(LINE));
+        t.addCell(new Cell().add(new Paragraph(dedAmt == null ? "" : amt(dedAmt))
+                        .setFontSize(8).setTextAlignment(TextAlignment.RIGHT))
+                .setPadding(3).setBorder(LINE));
+    }
+
+    /** LOP factor lagao aur 2 decimal pe round karo */
+    private BigDecimal pro(BigDecimal full, BigDecimal factor) {
+        return nz(full).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String str(Object v) {
+        if (v == null) return "0";
+        if (v instanceof BigDecimal b) return b.stripTrailingZeros().toPlainString();
+        return v.toString();
+    }
+
+    /** Account number masked - pay slip pe poora number nahi dikhana chahiye */
+    private String maskedBank(Employee e) {
+        String bank = e.getBankName();
+        String acc  = e.getBankAccountNumber();
+        if (acc == null || acc.isBlank()) return dash(bank);
+        String last4 = acc.length() > 4 ? acc.substring(acc.length() - 4) : acc;
+        return (bank == null || bank.isBlank() ? "" : bank + " ") + "****" + last4;
     }
 }

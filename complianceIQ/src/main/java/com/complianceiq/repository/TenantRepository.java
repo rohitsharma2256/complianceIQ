@@ -4,6 +4,8 @@ import com.complianceiq.model.Tenant;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,5 +13,6 @@ import java.util.UUID;
 public interface TenantRepository extends JpaRepository<Tenant, UUID> {
     Optional<Tenant> findByEmail(String email);
     boolean existsByEmail(String email);
+    List<Tenant> findByIsActiveFalseAndDeletionRequestedAtBefore(LocalDateTime cutoff);
 }
 

@@ -48,7 +48,8 @@ public class AIController {
                     .body(Map.of("error", "Question cannot be empty"));
         }
 
-        String answer = aiComplianceService.askAgentic(question);
+        // Router se jaayega - question ke hisaab se plain / RAG / agentic lane chunega
+        String answer = aiComplianceService.ask(question);
         return ResponseEntity.ok(Map.of("question", question, "answer", answer));
     }
 

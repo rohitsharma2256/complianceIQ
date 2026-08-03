@@ -30,7 +30,7 @@ public class ComplianceRecord {
     private Employee employee;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "violation_type")
+    @Column(name = "violation_type" , columnDefinition = "VARCHAR(50)")
     private ViolationType violationType;
 
     @Column(name = "description", columnDefinition = "TEXT")
@@ -40,7 +40,7 @@ public class ComplianceRecord {
     private String recommendedFix;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "severity")
+    @Column(name = "severity" , columnDefinition = "VARCHAR(20)")
     @Builder.Default
     private Severity severity = Severity.MEDIUM;
 
@@ -59,9 +59,10 @@ public class ComplianceRecord {
         TDS_CALCULATION,        // TDS galat calculate hua
         PROFESSIONAL_TAX,       // PT missing
         MINIMUM_WAGE,           // Minimum wage violation
-        LABOUR_WELFARE_FUND     // LWF missing
+        LABOUR_WELFARE_FUND,    // LWF missing
+        MISSING_DATA,           // PAN / UAN / ESIC IP missing - filing block karta hai
+        INFO                    // Sirf information, violation nahi (jaise PF ceiling)
     }
-
     public enum Severity {
         LOW,
         MEDIUM,

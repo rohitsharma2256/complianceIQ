@@ -9,14 +9,23 @@ const findReportId = (text) => {
   return m ? m[1] : null
 }
 
+const inr = (v) => `₹${Number(v || 0).toLocaleString('en-IN')}`
+
 export default function AiChat() {
   const { selected } = useCompany()
   const now = new Date()
+  const month = now.getMonth() + 1
+  const year = now.getFullYear()
+
   const [messages, setMessages] = useState([
-    { role: 'ai', text: 'Hi! I\'m your compliance assistant. I can check compliance, find violations, generate downloadable reports and answer payroll questions — all for your selected company. Use the quick actions below or just ask!' }
+    { role: 'ai', text: "Hi! I'm your compliance assistant. The quick actions below run instantly on your data. You can also ask me anything in your own words — I'll use the tools I need." }
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [lastRunId, setLastRunId] = useState(null)
+
+  const push = (role, text, extra = {}) =>
+    setMessages((m) => [...m, { role, text, ...extra }])
 
   const downloadReport = async (runId) => {
     try {
@@ -25,23 +34,124 @@ export default function AiChat() {
       a.href = window.URL.createObjectURL(new Blob([res.data]))
       a.download = 'compliance-report.pdf'
       a.click()
-    } catch { /* ignore */ }
+    } catch {
+      push('ai', 'Could not download the report.')
+    }
   }
 
+  /* ============================================================
+     QUICK ACTIONS - AI ke BINA, seedha REST API (0 tokens)
+     Frontend ko company aur period pata hai - LLM ki zarurat nahi
+     ============================================================ */
+  const quickActions = selected ? [
+    {
+      label: 'Check Compliance',
+      run: async () => {
+        const r = await api.post(
+          `/api/compliance/check/${selected.id}?month=${month}&year=${year}`)
+        const d = r.data
+        if (d?.id) setLastRunId(d.id)
+        return {
+          text:
+`Compliance check complete — ${selected.companyName} (${month}/${year})
+
+- Employees: ${d.totalEmployees}
+- EPF: ${inr(d.totalEpfEmployee)} employee + ${inr(d.totalEpfEmployer)} employer
+- ESI: ${inr(d.totalEsiEmployee)} employee + ${inr(d.totalEsiEmployer)} employer
+- TDS: ${inr(d.totalTds)}
+- Professional Tax: ${inr(d.totalProfessionalTax)}
+- Status: ${d.status}
+
+Use "Show Violations" to see what needs fixing.`
+        }
+      }
+    },
+    {
+      label: 'Show Violations',
+      run: async () => {
+        let runId = lastRunId
+        // Run nahi hua toh pehle chala do
+        if (!runId) {
+          const c = await api.post(
+            `/api/compliance/check/${selected.id}?month=${month}&year=${year}`)
+          runId = c.data?.id
+          setLastRunId(runId)
+        }
+        const r = await api.get(`/api/compliance/violations/${runId}`)
+        const list = Array.isArray(r.data) ? r.data : []
+        if (!list.length) return { text: 'No open violations found. Everything looks compliant.' }
+
+        const high = list.filter(v => v.severity === 'HIGH').length
+        return {
+          text:
+`${list.length} item(s) found${high ? ` — ${high} high severity` : ''}:\n\n` +
+            list.map(v =>
+              `• [${v.severity}] ${v.description}\n   Fix: ${v.recommendedFix}`
+            ).join('\n\n')
+        }
+      }
+    },
+    {
+      label: 'Generate Report',
+      run: async () => {
+        let runId = lastRunId
+        if (!runId) {
+          const c = await api.post(
+            `/api/compliance/check/${selected.id}?month=${month}&year=${year}`)
+          runId = c.data?.id
+          setLastRunId(runId)
+        }
+        return {
+          text: `Compliance report is ready for ${selected.companyName} (${month}/${year}).`,
+          reportId: runId
+        }
+      }
+    },
+    {
+      label: 'Upcoming Deadlines',
+      run: async () => {
+        const r = await api.get('/api/deadlines')
+        const list = Array.isArray(r.data) ? r.data : (r.data?.deadlines || [])
+        return {
+          text: list.length
+            ? 'Upcoming statutory deadlines:\n\n' +
+              list.map(d => `• ${typeof d === 'string' ? d : JSON.stringify(d)}`).join('\n')
+            : 'No deadlines in the next few days.'
+        }
+      }
+    },
+  ] : []
+
+  const runQuickAction = async (action) => {
+    push('user', action.label)
+    setLoading(true)
+    try {
+      const { text, reportId } = await action.run()
+      push('ai', text, reportId ? { reportId } : {})
+    } catch (err) {
+      push('ai', err.response?.data?.error
+        || err.response?.data?.message
+        || 'Could not complete that action.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /* ============================================================
+     FREE-TEXT QUESTIONS - yahin AI actually value deta hai
+     ============================================================ */
   const askAgent = async (question, displayText) => {
-    setMessages((m) => [...m, { role: 'user', text: displayText || question }])
+    push('user', displayText || question)
     setLoading(true)
     try {
       const res = await api.post('/api/ai/agent', { question })
       const answer = res.data.answer
-      const reportId = findReportId(answer)
-      setMessages((m) => [...m, { role: 'ai', text: answer, reportId }])
+      push('ai', answer, { reportId: findReportId(answer) })
     } catch (err) {
       const raw = JSON.stringify(err.response?.data || '')
-      const text = raw.includes('rate_limit') || raw.includes('429')
-        ? 'AI is busy right now (free tier limit). Please wait a minute and try again.'
-        : 'Something went wrong. Please try again.'
-      setMessages((m) => [...m, { role: 'ai', text }])
+      push('ai', raw.includes('rate_limit') || raw.includes('429')
+        ? 'The AI is rate-limited right now. Please wait about half a minute and try again — the quick actions above still work instantly.'
+        : 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -51,47 +161,36 @@ export default function AiChat() {
     if (!input.trim()) return
     let q = input
     if (selected) {
-      q = `${input}\n\n(Context: The user's selected company is "${selected.companyName}" with company ID ${selected.id}. Use this company for any company-related actions unless another is specified.)`
+      q = `${input}\n\n(Context: selected company is "${selected.companyName}", id ${selected.id}. Current period ${month}/${year}.)`
     }
     askAgent(q, input)
     setInput('')
   }
 
-  const month = now.getMonth() + 1
-  const year = now.getFullYear()
-
-  const quickActions = selected ? [
-    { label: 'Check Compliance',
-      q: `Run compliance check for company ${selected.id} for month ${month} year ${year}`,
-      d: `Check compliance for ${selected.companyName} (${month}/${year})` },
-    { label: 'Show Violations',
-      q: `Run compliance check for company ${selected.id} for month ${month} year ${year} and show me all violations with fixes`,
-      d: `Show violations for ${selected.companyName}` },
-    { label: 'Generate Report',
-      q: `Generate a compliance report for company ${selected.id} for month ${month} year ${year}. Include the download link in your answer.`,
-      d: `Generate report for ${selected.companyName}` },
-    { label: 'Upcoming Deadlines',
-      q: 'What compliance deadlines are coming up? List each with days remaining.',
-      d: 'What deadlines are coming up?' },
-  ] : []
-
   return (
     <div>
       <h1 className="text-2xl font-bold text-slate-800 mb-1">AI Assistant</h1>
       <p className="text-slate-500 text-sm mb-4">
-        {selected ? `Working on: ${selected.companyName}` : 'Select a company from the sidebar for company actions'}
+        {selected
+          ? `Working on: ${selected.companyName}`
+          : 'Select a company from the sidebar for company actions'}
       </p>
 
       {quickActions.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-3">
+        <div className="flex flex-wrap gap-2 mb-1">
           {quickActions.map((a) => (
             <button key={a.label} disabled={loading}
-              onClick={() => askAgent(a.q, a.d)}
+              onClick={() => runQuickAction(a)}
               className="flex items-center gap-1 text-xs bg-brand-50 text-brand-600 px-3 py-1.5 rounded-full hover:bg-brand-100 disabled:opacity-50">
               <Zap size={12} /> {a.label}
             </button>
           ))}
         </div>
+      )}
+      {quickActions.length > 0 && (
+        <p className="text-xs text-slate-400 mb-3">
+          Quick actions run directly on your data — instant, and they don't use the AI quota.
+        </p>
       )}
 
       <div className="card h-[55vh] flex flex-col">
@@ -114,7 +213,7 @@ export default function AiChat() {
               </div>
             </div>
           ))}
-          {loading && <p className="text-slate-400 text-sm">AI is working...</p>}
+          {loading && <p className="text-slate-400 text-sm">Working...</p>}
         </div>
         <div className="flex gap-2">
           <input className="input" placeholder="Ask anything — no IDs needed..."

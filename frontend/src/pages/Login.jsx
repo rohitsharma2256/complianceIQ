@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../api/axios'
 import { useAuth } from '../context/AuthContext'
 
@@ -7,19 +7,43 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
+  const [params] = useSearchParams()
   const { login } = useAuth()
   const navigate = useNavigate()
 
   const submit = async (e) => {
     e.preventDefault()
-    setError(''); setLoading(true)
+    setError(''); setInfo(''); setLoading(true)
     try {
       const res = await api.post('/api/auth/login', { email, password })
       login(res.data)
       navigate('/')
+
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Check credentials.')
+      const data = err.response?.data
+
+      // Account grace period mein hai - restore ka option do
+      if (data?.pendingDeletion) {
+        const restore = window.confirm(
+          'This account is scheduled for deletion. Would you like to restore it now?')
+
+        if (restore) {
+          try {
+            await api.post('/api/account/reactivate', { email, password })
+            setInfo('Account restored. Please log in again.')
+          } catch (e) {
+            setError(e.response?.data?.error || 'Could not restore the account.')
+          }
+        } else {
+          setError('This account is scheduled for deletion and cannot be used.')
+        }
+
+      } else {
+        setError(data?.error || data?.message || 'Login failed. Check credentials.')
+      }
+
     } finally {
       setLoading(false)
     }
@@ -32,7 +56,22 @@ export default function Login() {
           <h1 className="text-2xl font-bold text-brand-700">ComplianceIQ</h1>
           <p className="text-slate-500 text-sm mt-1">AI Payroll Compliance for CAs</p>
         </div>
-        {error && <div className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</div>}
+
+        {/* Session expire hone pe axios interceptor ?expired=1 ke saath bhejta hai */}
+        {params.get('expired') && (
+          <div className="bg-amber-50 text-amber-700 text-sm p-3 rounded-lg mb-4">
+            Your session expired. Please log in again.
+          </div>
+        )}
+
+        {info && (
+          <div className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{info}</div>
+        )}
+
+        {error && (
+          <div className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</div>
+        )}
+
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label">Email</label>
@@ -44,10 +83,16 @@ export default function Login() {
             <input className="input" type="password" value={password}
               onChange={(e) => setPassword(e.target.value)} required />
           </div>
+          <div className="text-right">
+            <Link to="/forgot-password" className="text-sm text-brand-500 hover:underline">
+              Forgot Password?
+            </Link>
+          </div>
           <button className="btn btn-primary w-full" disabled={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
+
         <p className="text-center text-sm text-slate-500 mt-4">
           New firm? <Link to="/register" className="text-brand-500 font-medium">Register</Link>
         </p>

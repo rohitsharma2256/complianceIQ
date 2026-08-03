@@ -22,4 +22,17 @@ public class CompanyRequest {
     private String epfRegistrationNumber;
     private String esicRegistrationNumber;
     private String tanNumber;
+
+    private String cin;
+    private String gstin;
+    private String pan;
+    private String addressLine1;
+    private String addressLine2;
+    private String pincode;
+    private String bankName;
+    private String bankAccountNumber;
+    private String bankIfsc;
+    private String signatoryName;
+    private String signatoryDesignation;
+    private String logoUrl;
 }

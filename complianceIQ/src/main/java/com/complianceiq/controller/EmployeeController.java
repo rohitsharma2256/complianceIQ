@@ -7,6 +7,7 @@ import com.complianceiq.service.EmployeeService;
 import com.complianceiq.service.ExcelService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,28 +24,15 @@ public class EmployeeController {
     private final EmployeeService employeeService;
     private final ExcelService excelService;
 
+    /** CREATE - ab poora DTO seedha service ko jaata hai */
     @PostMapping
     public ResponseEntity<Employee> addEmployee(
             @Valid @RequestBody EmployeeRequest request) {
-
-        Employee employee = employeeService.addEmployee(
-                request.getCompanyId(),
-                request.getFullName(),
-                request.getEmployeeCode(),
-                request.getDesignation(),
-                request.getBasicSalary(),
-                request.getHra(),
-                request.getSpecialAllowance(),
-                request.getTotalCtc(),
-                request.getPanNumber(),
-                request.getUanNumber(),
-                request.getWorkState(),
-                request.getDateOfJoining(),
-                request.getEmploymentType()
-        );
-        return ResponseEntity.ok(employee);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(employeeService.addEmployee(request));
     }
 
+    /** READ - company ke saare active employees */
     @GetMapping("/company/{companyId}")
     public ResponseEntity<List<Employee>> getEmployees(
             @PathVariable UUID companyId) {
@@ -52,6 +40,14 @@ public class EmployeeController {
                 employeeService.getEmployeesByCompany(companyId));
     }
 
+    /** READ - ek employee */
+    @GetMapping("/{employeeId}")
+    public ResponseEntity<Employee> getEmployee(
+            @PathVariable UUID employeeId) {
+        return ResponseEntity.ok(employeeService.getEmployee(employeeId));
+    }
+
+    /** BULK UPLOAD - Excel */
     @PostMapping("/upload/{companyId}")
     public ResponseEntity<Map<String, String>> uploadExcel(
             @PathVariable UUID companyId,
@@ -61,12 +57,11 @@ public class EmployeeController {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "File is empty"));
         }
-
         String result = excelService.uploadEmployees(companyId, file);
         return ResponseEntity.ok(Map.of("result", result));
     }
 
-    // NEW — update employee
+    /** UPDATE - partial update (sirf bheje hue fields badalte hain) */
     @PutMapping("/{employeeId}")
     public ResponseEntity<Employee> updateEmployee(
             @PathVariable UUID employeeId,
@@ -75,7 +70,7 @@ public class EmployeeController {
                 employeeService.updateEmployee(employeeId, updated));
     }
 
-    // NEW — delete employee
+    /** DELETE - soft delete (historical payroll safe rehta hai) */
     @DeleteMapping("/{employeeId}")
     public ResponseEntity<Map<String, String>> deleteEmployee(
             @PathVariable UUID employeeId) {

@@ -55,4 +55,59 @@ public class EmailService {
         sendEmail(to, "Compliance Deadline Reminder - ComplianceIQ",
                 body.toString());
     }
+
+    public void sendPasswordResetEmail(String to, String fullName, String link) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(to);
+            message.setSubject("ComplianceIQ - Reset your password");
+            message.setText(
+                    "Hi " + (fullName == null ? "" : fullName) + ",\n\n" +
+                            "We received a request to reset your ComplianceIQ password.\n\n" +
+                            "Click the link below to set a new password:\n" +
+                            link + "\n\n" +
+                            "This link is valid for 1 hour and can be used only once.\n" +
+                            "If you did not request this, you can safely ignore this email.\n\n" +
+                            "- ComplianceIQ"
+            );
+            mailSender.send(message);
+        } catch (Exception e) {
+            log.error("Failed to send reset email to {}: {}", to, e.getMessage());
+        }
+    }
+
+    public void sendAccountDeletionEmail(String to, String name, String permanentDate) {
+        try {
+            SimpleMailMessage m = new SimpleMailMessage();
+            m.setTo(to);
+            m.setSubject("ComplianceIQ - Account deletion scheduled");
+            m.setText("Hi " + (name == null ? "" : name) + ",\n\n"
+                    + "Your ComplianceIQ account has been deactivated and is scheduled for "
+                    + "permanent deletion on " + permanentDate + ".\n\n"
+                    + "If this was a mistake, simply log in before that date and you will be "
+                    + "offered the option to restore your account.\n\n"
+                    + "After that date all firm data - companies, employees and payroll "
+                    + "records - will be permanently removed and cannot be recovered.\n\n"
+                    + "- ComplianceIQ");
+            mailSender.send(m);
+        } catch (Exception e) {
+            log.error("Failed to send deletion email to {}: {}", to, e.getMessage());
+        }
+    }
+
+    public void sendPasswordChangedEmail(String to, String name) {
+        try {
+            SimpleMailMessage m = new SimpleMailMessage();
+            m.setTo(to);
+            m.setSubject("ComplianceIQ - Your password was changed");
+            m.setText("Hi " + (name == null ? "" : name) + ",\n\n"
+                    + "Your ComplianceIQ password was changed just now.\n\n"
+                    + "If this wasn't you, reset your password immediately using the "
+                    + "'Forgot Password' link on the login page, and contact support.\n\n"
+                    + "- ComplianceIQ");
+            mailSender.send(m);
+        } catch (Exception e) {
+            log.error("Failed to send password-change email to {}: {}", to, e.getMessage());
+        }
+    }
 }

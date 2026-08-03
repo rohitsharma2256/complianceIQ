@@ -50,7 +50,12 @@ public class User {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime cretedAt;
 
+    /** Soft delete ka timestamp - 30 din baad permanent purge */
+    @Column(name = "deletion_requested_at")
+    private LocalDateTime deletionRequestedAt;
+
     public enum Role {
-        CA_ADMIN, CA_STAFF
+        CA_ADMIN,
+        CA_STAFF
     }
 }

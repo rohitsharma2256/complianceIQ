@@ -1,16 +1,19 @@
+import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, Building2, Users, ShieldCheck, FileText,
+  LayoutDashboard, Building2, Users, CalendarCheck, ShieldCheck, FileText,
   Receipt, FileSpreadsheet, Calculator, ClipboardCheck,
-  Calendar, Bot, BookOpen, RefreshCw, LogOut, X
+  Calendar, Bot, BookOpen, RefreshCw, History, Settings, LogOut, X
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import api from '../api/axios'
 import CompanySelector from './CompanySelector'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/companies', label: 'Companies', icon: Building2 },
   { to: '/employees', label: 'Employees', icon: Users },
+  { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
   { to: '/compliance', label: 'Compliance', icon: ShieldCheck },
   { to: '/reports', label: 'Reports', icon: FileText },
   { to: '/payslips', label: 'Payslips', icon: Receipt },
@@ -20,11 +23,25 @@ const links = [
   { to: '/deadlines', label: 'Deadlines', icon: Calendar },
   { to: '/ai-chat', label: 'AI Assistant', icon: Bot },
   { to: '/ask-law', label: 'Ask Law', icon: BookOpen },
-  { to: '/law-updates', label: 'Add Law Update', icon: RefreshCw },
+  // Platform admin only - law updates saare firms ke RAG answers affect karte hain
+  { to: '/law-updates', label: 'Add Law Update', icon: RefreshCw, adminOnly: true },
+  { to: '/audit', label: 'Activity Log', icon: History },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function Sidebar({ open, onClose }) {
   const { user, logout } = useAuth()
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    api.get('/api/law-updates/is-admin')
+      .then(r => setIsAdmin(!!r.data.isAdmin))
+      .catch(() => setIsAdmin(false))
+  }, [])
+
+  // Admin nahi hai toh admin-only links hata do.
+  // NOTE: yeh sirf UX hai - asli enforcement backend pe hai (403).
+  const visibleLinks = links.filter(l => !l.adminOnly || isAdmin)
 
   return (
     <>
@@ -57,7 +74,7 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3">
-          {links.map(({ to, label, icon: Icon }) => (
+          {visibleLinks.map(({ to, label, icon: Icon, adminOnly }) => (
             <NavLink
               key={to}
               to={to}
@@ -70,15 +87,28 @@ export default function Sidebar({ open, onClose }) {
               }
             >
               <Icon size={18} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {adminOnly && (
+                <span className="text-[9px] bg-amber-400 text-brand-900
+                                 px-1.5 py-0.5 rounded font-semibold">
+                  ADMIN
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
 
         <div className="p-4 border-t border-brand-600">
           <p className="text-sm font-medium truncate">{user?.firmName}</p>
-          <p className="text-xs text-brand-100 truncate mb-3">{user?.email}</p>
-          <button onClick={logout} className="flex items-center gap-2 text-sm hover:text-red-300">
+          <p className="text-xs text-brand-100 truncate mb-2">{user?.email}</p>
+          {isAdmin && (
+            <span className="inline-block text-[10px] bg-amber-400 text-brand-900
+                             px-2 py-0.5 rounded-full font-semibold mb-2">
+              PLATFORM ADMIN
+            </span>
+          )}
+          <button onClick={logout}
+                  className="flex items-center gap-2 text-sm hover:text-red-300 mt-1">
             <LogOut size={16} /> Logout
           </button>
         </div>

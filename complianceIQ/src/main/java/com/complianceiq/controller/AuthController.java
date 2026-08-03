@@ -6,13 +6,17 @@ import com.complianceiq.dto.RegisterRequest;
 import com.complianceiq.model.Tenant;
 import com.complianceiq.model.User;
 import com.complianceiq.security.JwtService;
+import com.complianceiq.service.PasswordResetService;
 import com.complianceiq.service.TenantService;
 import com.complianceiq.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -23,6 +27,7 @@ public class AuthController {
     private final UserService userService;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final PasswordResetService passwordResetService;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
@@ -42,36 +47,68 @@ public class AuthController {
 
         String token = jwtService.generateToken(user.getEmail());
 
-        AuthResponse response = AuthResponse.builder()
+        return ResponseEntity.ok(AuthResponse.builder()
                 .token(token)
                 .email(user.getEmail())
                 .fullName(user.getFullName())
                 .firmName(tenant.getFirmName())
                 .tenantId(tenant.getId())
-                .build();
-
-        return ResponseEntity.ok(response);
+                .build());
     }
 
+    /**
+     * Return type wildcard hai kyunki do alag shapes ja sakte hain:
+     * success pe AuthResponse, deletion-pending pe error map.
+     */
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
 
         User user = userService.findByEmail(request.getEmail());
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("Invalid credentials");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Invalid email or password."));
+        }
+
+        // Account grace period mein hai - frontend restore ka option dega
+        if (Boolean.FALSE.equals(user.getIsActive())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                    "error", "This account is scheduled for deletion.",
+                    "pendingDeletion", true));
         }
 
         String token = jwtService.generateToken(user.getEmail());
 
-        AuthResponse response = AuthResponse.builder()
+        return ResponseEntity.ok(AuthResponse.builder()
                 .token(token)
                 .email(user.getEmail())
                 .fullName(user.getFullName())
                 .firmName(user.getTenant().getFirmName())
                 .tenantId(user.getTenant().getId())
-                .build();
+                .build());
+    }
 
-        return ResponseEntity.ok(response);
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(
+            @RequestBody Map<String, String> request) {
+
+        passwordResetService.requestReset(request.get("email"));
+
+        // Hamesha same message - email exist kare ya na kare (enumeration se bachav)
+        return ResponseEntity.ok(Map.of("message",
+                "If an account exists with that email, a reset link has been sent."));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(
+            @RequestBody Map<String, String> request) {
+        try {
+            passwordResetService.resetPassword(
+                    request.get("token"), request.get("newPassword"));
+            return ResponseEntity.ok(Map.of("message",
+                    "Password updated successfully. You can log in now."));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 }

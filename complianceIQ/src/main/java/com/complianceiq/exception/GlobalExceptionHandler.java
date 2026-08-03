@@ -59,4 +59,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(error);
     }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> accessDenied(
+            org.springframework.security.access.AccessDeniedException ex) {
+        // 403 = "pata hai tum kaun ho, par yeh allowed nahi"
+        // (401 = "pata hi nahi tum kaun ho" - session expired)
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Map.of("error", ex.getMessage()));
+    }
 }

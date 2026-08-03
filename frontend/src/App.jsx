@@ -6,6 +6,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Companies from './pages/Companies'
 import Employees from './pages/Employees'
+import Attendance from './pages/Attendance'
 import Compliance from './pages/Compliance'
 import Reports from './pages/Reports'
 import Payslips from './pages/Payslips'
@@ -16,7 +17,10 @@ import Deadlines from './pages/Deadlines'
 import AiChat from './pages/AiChat'
 import AskLaw from './pages/AskLaw'
 import LawUpdates from './pages/LawUpdates'
-
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
+import AuditLog from './pages/AuditLog'
+import Settings from './pages/Settings'
 const wrap = (Page) => (
   <ProtectedRoute><Layout><Page /></Layout></ProtectedRoute>
 )
@@ -26,9 +30,12 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/" element={wrap(Dashboard)} />
       <Route path="/companies" element={wrap(Companies)} />
       <Route path="/employees" element={wrap(Employees)} />
+      <Route path="/attendance" element={wrap(Attendance)} />
       <Route path="/compliance" element={wrap(Compliance)} />
       <Route path="/reports" element={wrap(Reports)} />
       <Route path="/payslips" element={wrap(Payslips)} />
@@ -39,6 +46,9 @@ export default function App() {
       <Route path="/ai-chat" element={wrap(AiChat)} />
       <Route path="/ask-law" element={wrap(AskLaw)} />
       <Route path="/law-updates" element={wrap(LawUpdates)} />
+      <Route path="/audit" element={wrap(AuditLog)} />
+      <Route path="/settings" element={wrap(Settings)} />
+      
     </Routes>
   )
 }

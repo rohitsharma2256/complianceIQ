@@ -46,4 +46,6 @@ public class Tenant {
     @Column(name = "updated_at")
     private LocalDateTime updateAt;
 
+   private LocalDateTime deletionRequestedAt;
+
 }

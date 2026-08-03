@@ -56,4 +56,46 @@ public class Company {
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    /* ---------- Statutory registrations */
+    @Column(length = 21)
+    private String cin;                    // Corporate Identity Number
+
+    @Column(length = 15)
+    private String gstin;                  // GST number
+
+    @Column(length = 10)
+    private String pan;                    // Company PAN
+
+
+
+    /* ---------- Registered address (Form 16 / reports ke liye) ---------- */
+    @Column(length = 300)
+    private String addressLine1;
+
+    @Column(length = 300)
+    private String addressLine2;
+
+    @Column(length = 10)
+    private String pincode;
+
+    /* ---------- Company bank (salary transfer / challan) ---------- */
+    @Column(length = 100)
+    private String bankName;
+
+    @Column(length = 30)
+    private String bankAccountNumber;
+
+    @Column(length = 15)
+    private String bankIfsc;
+
+    /* ---------- Employer signatory (Form 16 Part B ke liye mandatory) ---------- */
+    @Column(length = 150)
+    private String signatoryName;
+
+    @Column(length = 150)
+    private String signatoryDesignation;
+
+    @Column(length = 500)
+    private String logoUrl;                // Payslip pe logo (Checklist D2)
 }

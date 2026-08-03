@@ -1,5 +1,6 @@
 package com.complianceiq.config;
 
+import com.complianceiq.security.JwtAuthEntryPoint;
 import com.complianceiq.security.JwtAuthFilter;
 import com.complianceiq.security.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final RateLimitFilter rateLimitFilter;
+    private final JwtAuthEntryPoint jwtAuthEntryPoint;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -32,13 +34,17 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        // Sirf login/register PUBLIC
+                        // Sirf login/register PUBLIC (forgot/reset password bhi isi mein)
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/account/reactivate").permitAll()   // login se pehle
                         // Baaki SAB JWT-protected
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Token missing/expired -> 401 (na ki 403). Frontend 401 pe hi
+                // session clear karta hai; 403 "permission nahi hai" ke liye hai.
+                .exceptionHandling(e -> e.authenticationEntryPoint(jwtAuthEntryPoint))
                 .addFilterBefore(rateLimitFilter,
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter,
@@ -50,11 +56,8 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-//        config.setAllowedOrigins(List.of(
-//                "http://localhost:5173",
-//                "http://localhost:3000"
-//        ));
-        //after deploy update
+
+        // Local dev + deployed frontend. Domain lene ke baad https URL yahan add karna.
         config.setAllowedOrigins(List.of(
                 "http://localhost:5173",
                 "http://localhost:3000",

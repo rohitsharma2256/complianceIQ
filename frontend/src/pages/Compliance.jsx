@@ -5,6 +5,8 @@ import NoCompany from '../components/NoCompany'
 import MonthYear from '../components/MonthYear'
 import { Download, FileText, CheckCircle } from 'lucide-react'
 
+const CHALLAN_TYPES = ['EPF', 'ESI', 'TDS']
+
 export default function Compliance() {
   const { selected } = useCompany()
   const [month, setMonth] = useState(new Date().getMonth() + 1)
@@ -30,11 +32,14 @@ export default function Compliance() {
   const runCheck = async () => {
     setMsg(''); setViolations(null); setLoading(true)
     try {
-      const res = await api.post(`/api/compliance/check/${selected.id}?month=${month}&year=${year}`)
+      const res = await api.post(
+        `/api/compliance/check/${selected.id}?month=${month}&year=${year}`)
       setResult(res.data)
       loadHistory()
     } catch (err) {
-      setMsg(err.response?.data?.message || 'Check failed. Add employees first.')
+      setMsg(err.response?.data?.message
+          || err.response?.data?.error
+          || 'Check failed. Add employees first.')
     } finally { setLoading(false) }
   }
 
@@ -42,7 +47,7 @@ export default function Compliance() {
     try {
       const res = await api.get(`/api/compliance/violations/${runId}`)
       setViolations(res.data)
-    } catch (err) {
+    } catch {
       setMsg('Failed to load violations')
     }
   }
@@ -55,19 +60,38 @@ export default function Compliance() {
     } catch { setMsg('Failed to resolve') }
   }
 
+  /** Blob download pe backend JSON error bhejta hai - usko padho */
+  const readBlobError = async (err, fallback) => {
+    try {
+      const text = await err.response?.data?.text?.()
+      const json = JSON.parse(text)
+      return json.error || json.message || fallback
+    } catch { return fallback }
+  }
+
   const downloadPdf = async (url, filename) => {
+    setMsg('')
     try {
       const res = await api.get(url, { responseType: 'blob' })
       const link = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a')
       a.href = link; a.download = filename; a.click()
-    } catch { setMsg('Download failed') }
+      window.URL.revokeObjectURL(link)
+    } catch (err) {
+      setMsg(await readBlobError(err, 'Download failed'))
+    }
   }
+
+  const downloadChallan = (run, type) =>
+    downloadPdf(`/api/challans/${run.id}?type=${type}`,
+      `${type}_challan_${run.month}_${run.year}.pdf`)
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-slate-800 mb-1">Compliance Check</h1>
-      <p className="text-slate-500 text-sm mb-4">EPF, ESI, TDS, PT + violations for {selected.companyName}</p>
+      <p className="text-slate-500 text-sm mb-4">
+        EPF, ESI, TDS, PT + violations for {selected.companyName}
+      </p>
 
       <div className="card mb-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
         <MonthYear month={month} year={year} setMonth={setMonth} setYear={setYear} />
@@ -83,9 +107,14 @@ export default function Compliance() {
       {result && (
         <div className="card mb-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-800">Results — {result.totalEmployees} employees</h3>
-            <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full">{result.status}</span>
+            <h3 className="font-semibold text-slate-800">
+              Results — {result.totalEmployees} employees
+            </h3>
+            <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full">
+              {result.status}
+            </span>
           </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
             {[
               ['EPF Employee (12%)', result.totalEpfEmployee],
@@ -97,47 +126,77 @@ export default function Compliance() {
             ].map(([label, val]) => (
               <div key={label} className="bg-slate-50 rounded-lg p-3">
                 <p className="text-xs text-slate-500">{label}</p>
-                <p className="text-lg font-semibold text-slate-800">₹{val}</p>
+                <p className="text-lg font-semibold text-slate-800">
+                  ₹{Number(val || 0).toLocaleString('en-IN')}
+                </p>
               </div>
             ))}
           </div>
-          {/* DIRECT ACTIONS — no ID copying! */}
-          <div className="flex flex-wrap gap-2">
+
+          {/* DIRECT ACTIONS — no ID copying */}
+          <div className="flex flex-wrap gap-2 mb-3">
             <button className="btn btn-primary flex items-center gap-2"
-              onClick={() => downloadPdf(`/api/reports/compliance/${result.id}`, 'compliance-report.pdf')}>
+              onClick={() => downloadPdf(`/api/reports/compliance/${result.id}`,
+                `audit_report_${result.month}_${result.year}.pdf`)}>
               <FileText size={16} /> Download Audit Report
-            </button>
-            <button className="btn btn-outline flex items-center gap-2"
-              onClick={() => downloadPdf(`/api/forms/challan/${result.id}`, 'challan.pdf')}>
-              <Download size={16} /> Download Challan
             </button>
             <button className="btn btn-outline" onClick={() => loadViolations(result.id)}>
               View Violations
             </button>
+          </div>
+
+          {/* Challans — EPF / ESI / TDS alag alag */}
+          <div className="border-t pt-3">
+            <p className="text-xs text-slate-500 mb-2">
+              Payment challans (EPF &amp; ESI due by the 15th, TDS by the 7th of next month)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {CHALLAN_TYPES.map((t) => (
+                <button key={t}
+                  className="btn btn-outline flex items-center gap-2 text-sm"
+                  onClick={() => downloadChallan(result, t)}>
+                  <Download size={14} /> {t} Challan
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
       {violations && (
         <div className="card mb-4">
-          <h3 className="font-semibold text-slate-800 mb-3">Violations ({violations.length})</h3>
+          <h3 className="font-semibold text-slate-800 mb-3">
+            Violations ({violations.length})
+          </h3>
           {violations.length === 0 ? (
             <p className="text-green-600">No open violations. All compliant!</p>
           ) : (
             <div className="space-y-3">
-              {violations.map((v) => (
-                <div key={v.id} className="border-l-4 border-red-400 bg-red-50 p-3 rounded">
-                  <div className="flex justify-between items-start">
-                    <span className="font-medium text-red-700">{v.violationType}</span>
-                    <button onClick={() => resolveViolation(v.id)}
-                      className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200">
-                      <CheckCircle size={12} /> Mark Resolved
-                    </button>
+              {violations.map((v) => {
+                const high = v.severity === 'HIGH'
+                return (
+                  <div key={v.id}
+                       className={`border-l-4 p-3 rounded ${
+                         high ? 'border-red-400 bg-red-50'
+                              : 'border-amber-300 bg-amber-50'}`}>
+                    <div className="flex justify-between items-start">
+                      <span className={`font-medium ${
+                        high ? 'text-red-700' : 'text-amber-700'}`}>
+                        [{v.severity}] {v.violationType}
+                      </span>
+                      <button onClick={() => resolveViolation(v.id)}
+                        className="flex items-center gap-1 text-xs bg-green-100 text-green-700
+                                   px-2 py-1 rounded hover:bg-green-200">
+                        <CheckCircle size={12} /> Mark Resolved
+                      </button>
+                    </div>
+                    <p className="text-sm text-slate-700 mt-1">{v.description}</p>
+                    <p className="text-sm text-slate-500 mt-1">
+                      <b>Fix:</b> {v.recommendedFix}
+                    </p>
                   </div>
-                  <p className="text-sm text-slate-700 mt-1">{v.description}</p>
-                  <p className="text-sm text-slate-500 mt-1"><b>Fix:</b> {v.recommendedFix}</p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -146,38 +205,57 @@ export default function Compliance() {
       {history.length > 0 && (
         <div className="card">
           <h3 className="font-semibold text-slate-800 mb-3">Past Compliance Checks</h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left border-b text-slate-500">
-                <th className="py-2">Period</th><th>Employees</th><th>Status</th><th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((run) => (
-                <tr key={run.id} className="border-b hover:bg-slate-50">
-                  <td className="py-2">{run.month}/{run.year}</td>
-                  <td>{run.totalEmployees}</td>
-                  <td><span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{run.status}</span></td>
-                  <td>
-                    <div className="flex gap-2">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b text-slate-500">
+                  <th className="py-2">Period</th>
+                  <th>Employees</th>
+                  <th>Status</th>
+                  <th>Report</th>
+                  <th>Challans</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((run) => (
+                  <tr key={run.id} className="border-b hover:bg-slate-50">
+                    <td className="py-2">{run.month}/{run.year}</td>
+                    <td>{run.totalEmployees}</td>
+                    <td>
+                      <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">
+                        {run.status}
+                      </span>
+                    </td>
+                    <td>
                       <button className="text-brand-500 text-xs hover:underline"
-                        onClick={() => downloadPdf(`/api/reports/compliance/${run.id}`, `report-${run.month}-${run.year}.pdf`)}>
-                        Report
+                        onClick={() => downloadPdf(`/api/reports/compliance/${run.id}`,
+                          `audit_report_${run.month}_${run.year}.pdf`)}>
+                        Audit Report
                       </button>
-                      <button className="text-brand-500 text-xs hover:underline"
-                        onClick={() => downloadPdf(`/api/forms/challan/${run.id}`, `challan-${run.month}-${run.year}.pdf`)}>
-                        Challan
-                      </button>
+                    </td>
+                    <td>
+                      <div className="flex gap-2">
+                        {CHALLAN_TYPES.map((t) => (
+                          <button key={t}
+                            className="text-brand-500 text-xs hover:underline"
+                            onClick={() => downloadChallan(run, t)}>
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
                       <button className="text-brand-500 text-xs hover:underline"
                         onClick={() => { setResult(run); loadViolations(run.id) }}>
                         Violations
                       </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
