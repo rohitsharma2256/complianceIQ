@@ -5,6 +5,7 @@ services:
   db:
     image: pgvector/pgvector:pg16
     container_name: complianceiq-db
+    restart: always
     environment:
       POSTGRES_DB: complianceiq
       POSTGRES_USER: postgres
@@ -23,6 +24,7 @@ services:
   backend:
     build: ./complianceIQ
     container_name: complianceiq-backend
+    restart: always
     depends_on:
       db:
         condition: service_healthy
@@ -35,13 +37,26 @@ services:
       SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
       SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      # Password reset email mein yeh URL jaata hai
+      APP_FRONTEND_URL: ${APP_FRONTEND_URL}
+      # Law updates sirf yeh email kar sakta hai
+      PLATFORM_ADMINS: ${PLATFORM_ADMINS}
+      # Captcha - khali hua toh verification skip (local dev)
+      RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
+      # 1 GB instance pe JVM ka heap budget - warna OOM crash
+      JAVA_TOOL_OPTIONS: "-Xmx700m -Xms256m"
     ports:
       - "8080:8080"
 
   # React Frontend
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Vite build TIME pe embed karta hai - runtime pe nahi
+        VITE_RECAPTCHA_SITE_KEY: ${VITE_RECAPTCHA_SITE_KEY:-}
     container_name: complianceiq-frontend
+    restart: always
     depends_on:
       - backend
     ports:

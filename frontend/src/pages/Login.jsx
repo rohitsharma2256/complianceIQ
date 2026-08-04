@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../api/axios'
 import { useAuth } from '../context/AuthContext'
+import ReCAPTCHA from 'react-google-recaptcha'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -9,15 +10,34 @@ export default function Login() {
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState(null)
   const [params] = useSearchParams()
   const { login } = useAuth()
   const navigate = useNavigate()
+  const captchaRef = useRef(null)
+
+  // Local dev pe key set nahi hoti -> captcha widget dikhta hi nahi.
+  // Backend bhi secret na hone pe verification skip karta hai.
+  const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY
+
+  /** Failed attempt ke baad captcha reset - token single-use hota hai */
+  const resetCaptcha = () => {
+    captchaRef.current?.reset()
+    setCaptchaToken(null)
+  }
 
   const submit = async (e) => {
     e.preventDefault()
-    setError(''); setInfo(''); setLoading(true)
+    setError(''); setInfo('')
+
+    if (siteKey && !captchaToken) {
+      setError("Please verify you're not a robot.")
+      return
+    }
+
+    setLoading(true)
     try {
-      const res = await api.post('/api/auth/login', { email, password })
+      const res = await api.post('/api/auth/login', { email, password, captchaToken })
       login(res.data)
       navigate('/')
 
@@ -43,6 +63,8 @@ export default function Login() {
       } else {
         setError(data?.error || data?.message || 'Login failed. Check credentials.')
       }
+
+      resetCaptcha()      // Google token ek hi baar valid hota hai
 
     } finally {
       setLoading(false)
@@ -88,6 +110,18 @@ export default function Login() {
               Forgot Password?
             </Link>
           </div>
+
+          {siteKey && (
+            <div className="flex justify-center">
+              <ReCAPTCHA
+                ref={captchaRef}
+                sitekey={siteKey}
+                onChange={setCaptchaToken}
+                onExpired={() => setCaptchaToken(null)}
+              />
+            </div>
+          )}
+
           <button className="btn btn-primary w-full" disabled={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </button>

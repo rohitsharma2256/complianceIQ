@@ -6,6 +6,7 @@ import com.complianceiq.dto.RegisterRequest;
 import com.complianceiq.model.Tenant;
 import com.complianceiq.model.User;
 import com.complianceiq.security.JwtService;
+import com.complianceiq.service.CaptchaService;
 import com.complianceiq.service.PasswordResetService;
 import com.complianceiq.service.TenantService;
 import com.complianceiq.service.UserService;
@@ -28,6 +29,8 @@ public class AuthController {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final PasswordResetService passwordResetService;
+    private final CaptchaService captchaService;
+
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
@@ -62,6 +65,12 @@ public class AuthController {
      */
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
+        // Brute-force se bachav - Bucket4j rate limit ke saath
+        if (!captchaService.verify(request.getCaptchaToken())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Captcha verification failed. Please try again."));
+        }
+
 
         User user = userService.findByEmail(request.getEmail());
 
